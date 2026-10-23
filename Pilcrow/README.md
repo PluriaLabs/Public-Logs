@@ -16,9 +16,16 @@ Reports stay on the issue as an attachment. Nothing is committed to the reposito
 
 ## Retention
 
-A scheduled workflow (`.github/workflows/delete-old-reports.yml`) deletes issues whose title starts with `[Pilcrow]` once
-they are 90 days old. Anyone may have copied a public issue or its file by then, so this removes it from this repository
-and nothing more.
+Reports are kept for at most 90 days, and you delete them by hand. Once a month, open the repository's issues and search
+for the old ones, replacing the date with the day 90 days ago:
+
+```text
+is:issue in:title "[Pilcrow]" created:<2026-07-24
+```
+
+Open each one and choose **Delete issue** (closing an issue does not delete it). Deleting needs admin rights, and an
+organization owner must first allow issue deletion for the organization's repositories. Anyone may have copied a public
+issue or its file by then, so this removes it from this repository and nothing more.
 
 ## The report file
 
