@@ -1,0 +1,63 @@
+# Deletes report issues once they are RETENTION_DAYS old, so a diagnostic report does not stay public.
+#
+# An issue belongs to an app by its title prefix, such as "[Pilcrow]". Add a prefix to PREFIXES for a new app.
+# Runs on a schedule delete for real. A manual run is a dry run unless you switch "dry_run" off.
+#
+# Needs the secret REPORT_CLEANUP_TOKEN: a fine-grained token for this repository with Issues: Read and write
+# and Administration: Read and write (deleting an issue needs admin rights), and the organization must allow
+# issue deletion (Organization settings > Repository > Issues).
+#
+# GitHub does not document whether an issue's attached files are removed with it. Test that before you rely on it.
+name: Delete old reports
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List the issues that would be deleted, but delete nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  RETENTION_DAYS: "90"
+  PREFIXES: "[Pilcrow]"
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete report issues past their retention
+        env:
+          GH_TOKEN: ${{ secrets.REPORT_CLEANUP_TOKEN }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "REPORT_CLEANUP_TOKEN is not set, so nothing can be deleted." >&2
+            exit 1
+          fi
+          cutoff=$(date -u -d "${RETENTION_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Deleting report issues created before ${cutoff} (dry run: ${DRY_RUN})"
+          gh issue list --repo "$REPO" --state all --limit 1000 --json id,number,title,createdAt > issues.json
+          jq -r --arg cutoff "$cutoff" --arg prefixes "$PREFIXES" '
+            ($prefixes | split(",") | map(gsub("^\\s+|\\s+$"; ""))) as $p
+            | .[]
+            | select(.createdAt < $cutoff)
+            | select(.title as $t | any($p[]; . as $x | $t | startswith($x)))
+            | [.id, (.number | tostring)] | @tsv' issues.json > expired.tsv
+          count=$(wc -l < expired.tsv | tr -d ' ')
+          echo "${count} issue(s) past retention"
+          while IFS=$'\t' read -r id number; do
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "Would delete #${number}"
+            else
+              gh api graphql -f query='mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { clientMutationId } }' -f id="$id" > /dev/null
+              echo "Deleted #${number}"
+            fi
+          done < expired.tsv
